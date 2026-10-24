@@ -146,8 +146,12 @@ rather than that a line of text was written into the config.
 SKILL.md                     Claude Code skill instructions
 scripts/ensp_lib.py          console transport, topo parsing, discovery
 scripts/ensp.py              CLI: ports / exec / config / verify
-examples/configs/            static routing, OSPF (single/multi area), BGP, VLAN
+examples/configs/            static routing, OSPF (single/multi area), BGP, VLAN,
+                             campus_vrrp_lacp (dual-core with VRRP + LACP + STP)
 examples/checks/             matching verification plans
+references/device-catalog.md every eNSP model, its interfaces, and PC config
+references/topo-format.md    the .topo XML format
+references/vrp-cookbook.md   short working VRP snippets
 tests/                       unit tests plus a fake VRP device
 tests/fake_device.py         run a fake device on a fixed port for manual testing
 ```
@@ -185,13 +189,48 @@ python tests/fake_device.py 2000 R1        # terminal 1
 python scripts/ensp.py exec 2000 "display version"   # terminal 2
 ```
 
+## Gotchas that cost real debugging time
+
+These are covered by tests now, but they are worth knowing before you meet them
+on a live lab.
+
+**`save` does not survive closing the topology.** VRP's `save` writes to the
+runtime virtual flash under `%LOCALAPPDATA%\eNSP\VBoxServer\workspaces\<guid>\`,
+which eNSP deletes on close. Only *File → Save Topology* copies the flash images
+back into the `.topo` folder. If a lab "loses" its config after reopening, this
+is why.
+
+**PC settings live in the `.topo` file, not on the device.** A `PC` has no
+console. Its address is the `-simpc_ip` / `-simpc_mask` / `-simpc_gateway`
+attributes of its `<dev>` element. Edit them with the topology closed, or eNSP
+overwrites the file from memory.
+
+**Event logs break prompt detection.** VRP prints `DATASYNC_CFGCHANGE` and link
+up/down messages asynchronously, straight into the middle of command output.
+`config` sends `undo terminal monitor` first; for a long `exec` session, do the
+same.
+
+**Eth-Trunk members need the trunk to exist.** `eth-trunk 1` on a port fails
+with `The trunk port does not exist` unless `interface Eth-Trunk1` came first.
+`config` creates it on demand and retries, so snippet order no longer matters.
+
+**Interface prompts contain slashes.** The prompt inside an interface view is
+`[L1-GigabitEthernet0/0/1]`, so the prompt regex has to accept `/`.
+
+**The eNSP GUI cannot be driven by synthetic input.** eNSP runs elevated, and
+Windows UIPI silently discards mouse and keyboard events sent from a
+non-elevated process. Nothing errors; clicks simply do nothing. Change the
+`.topo` file instead.
+
 ## Limitations
 
 - Device names come from the `.topo` file. A device renamed with `sysname`
   shows its new name in `ports`, which is usually what you want, but the topo
-  name is what `--topo` resolves.
-- Devices with no VRP CLI (`PC`, `Laptop`, `Cloud`, `Hub`, `MCS`, `STA`, `AP`)
-  cannot be configured.
+  name is what `--topo` resolves. Localised labels such as `三层交换机L2` resolve
+  from the short name too, as long as the match is unambiguous.
+- Devices with no VRP CLI (`PC`, `Laptop`, `Cloud`, `Hub`, `MCS`, `STA`, `AP`,
+  `Client`, `Server`, `Cellphone`, `FRSW`) cannot be configured.
+  `references/device-catalog.md` lists every model eNSP offers.
 - One console session per device at a time. Do not run two commands against the
   same device in parallel.
 - eNSP console ports are assigned in device creation order, so the port is

@@ -10,6 +10,7 @@ covers the parts most likely to break in practice: prompt detection, the
 from __future__ import annotations
 
 import os
+import re
 import socket
 import sys
 import threading
@@ -51,6 +52,9 @@ class FakeVRP:
         self.port = self.sock.getsockname()[1]
         self.saved = False
         self.received: list[str] = []
+        # Eth-Trunks that exist on this fake device, so `eth-trunk N` on a
+        # member port can be rejected the way VRP rejects it.
+        self.eth_trunks: set[int] = set()
         # Set when the last reply ended on an interactive question, so the next
         # line is an answer rather than a new command.
         self._pending = False
@@ -164,6 +168,17 @@ class FakeVRP:
             return view, "Huawei Versatile Routing Platform Software\r\nVRP (R) software, Version 5.110"
         if cmd == "bad-command":
             return view, "Error: Unrecognized command found at '^' position."
+        if cmd == "undo terminal monitor":
+            return view, "Info: Current terminal monitor is off."
+        trunk_if = re.match(r"^interface Eth-Trunk(\d+)$", cmd)
+        if trunk_if:
+            self.eth_trunks.add(int(trunk_if.group(1)))
+            return view, ""
+        member = re.match(r"^eth-trunk (\d+)$", cmd)
+        if member:
+            if int(member.group(1)) not in self.eth_trunks:
+                return view, "Error: The trunk port does not exist."
+            return view, ""
         if cmd == "confirm-me":
             self._pending = True
             return view, "Really do it?[Y/N]"
@@ -282,6 +297,32 @@ class ConsoleTests(unittest.TestCase):
             with el.Console(fake.port, timeout=5) as con:
                 con.run("confirm-me")
         self.assertIn("Y", fake.received)
+
+    def test_config_quietens_terminal_monitor(self):
+        """Event logs interleaved with output look like a hung device."""
+        with FakeVRP("R1") as fake:
+            with el.Console(fake.port, timeout=5) as con:
+                con.config(["sysname R1"], save=False)
+        self.assertIn("undo terminal monitor", fake.received)
+
+    def test_eth_trunk_member_creates_missing_trunk(self):
+        """`eth-trunk 1` fails unless Eth-Trunk1 exists, whatever the order."""
+        with FakeVRP("R1") as fake:
+            with el.Console(fake.port, timeout=5) as con:
+                results = con.config(
+                    ["interface GigabitEthernet0/0/3", "eth-trunk 1"], save=False
+                )
+        outputs = dict(results)
+        self.assertNotIn("does not exist", outputs["eth-trunk 1"])
+        self.assertIn("interface Eth-Trunk1", fake.received)
+
+    def test_eth_trunk_existing_is_not_recreated(self):
+        with FakeVRP("R1") as fake:
+            with el.Console(fake.port, timeout=5) as con:
+                con.config(["interface Eth-Trunk1", "mode lacp-static"], save=False)
+                fake.received.clear()
+                con.config(["interface GigabitEthernet0/0/3", "eth-trunk 1"], save=False)
+        self.assertNotIn("interface Eth-Trunk1", fake.received)
 
     def test_missing_device_raises(self):
         with self.assertRaises(el.ConsoleError):

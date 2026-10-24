@@ -66,7 +66,10 @@ Expect one line per device with status `running`. If everything says
 boot to finish. Do not guess ports.
 
 Note the device names and models. Models `PC`, `Laptop`, `Cloud`, `Hub`, `MCS`,
-`STA` and `AP` have no VRP CLI and cannot be configured this way.
+`STA`, `AP`, `Client`, `Server`, `Cellphone` and `FRSW` have no VRP CLI and
+cannot be configured this way. `references/device-catalog.md` lists every model
+the palette offers, its interface naming, and how to set a PC's IP by editing
+the `.topo` file instead of the GUI.
 
 ### 2. Look before you write
 
@@ -113,6 +116,8 @@ only proves the text is there.
 Match the user's actual wiring. Interface names differ between models
 (`GigabitEthernet0/0/1` on AR1220, `Ethernet0/0/1` on some switches), and
 guessing produces config that applies cleanly but does not pass traffic.
+`references/device-catalog.md` has the interface set per model; the `.topo`
+file has the one actually installed on this device.
 
 If you do not know the wiring, read it from the topology or ask:
 
@@ -134,9 +139,34 @@ with loopbacks `10.0.1.1`, `10.0.2.2`, `10.0.3.3`.
 | Config applied but no connectivity | Wrong interface names, or the cable is on another port |
 | `Error: Unrecognized command` | Command not supported on that model or VRP version |
 | Prompt is `<Huawei>` | Device was never renamed; config may have gone to the wrong box |
+| Clicks or keystrokes sent to the eNSP GUI do nothing | eNSP runs elevated; Windows UIPI drops input from a non-elevated process. Edit the `.topo` file instead |
+| `no prompt after ...` while output shows `DATASYNC_CFGCHANGE` or other `Oct 25 ... DS/4/...` lines | Event logs interleaved with the command output. `config` now sends `undo terminal monitor` first; for `exec`, do it once per session |
+| `eth-trunk N` → `Error: The trunk port does not exist.` | The member port joined before `interface Eth-TrunkN` existed. `config` creates it on demand now; in hand-written configs, put the `interface Eth-TrunkN` block first |
+| Config looks right, works now, gone after reopening the topology | `save` only reaches the runtime flash. The user must also pick *File → Save Topology*. See below |
 
 When a command fails, read the actual VRP output back to the user rather than
 paraphrasing it. VRP error text names the exact position of the bad token.
+
+## Persistence: `save` is not enough
+
+This is the one thing that costs the most work when it is missed.
+
+`save` writes to the device's **runtime virtual flash**, which lives under
+`%LOCALAPPDATA%\eNSP\VBoxServer\workspaces\<device-guid>\slot17\flash.dat`.
+eNSP **deletes that directory when the topology closes**. Only *File → Save
+Topology* in the eNSP GUI copies the flash images back into the `.topo` folder
+as `flash.efz`, which is what survives a reopen.
+
+So after configuring:
+
+1. Tell the user to click **File → Save Topology** (保存拓扑) in eNSP.
+2. Warn that choosing *don't save* on close discards every device config, no
+   matter how many times `save` ran.
+3. A device folder's `flash.efz` timestamp is the proof: if it is still the
+   install date, the config was never persisted.
+
+PC settings are the exception — they live in the `.topo` file, so they follow
+the topology, not the device flash.
 
 ## Safety
 

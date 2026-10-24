@@ -1,0 +1,86 @@
+{
+  "description": "Dual-core campus: VLANs, OSPF multi-area, VRRP gateway redundancy, LACP and STP. Checks prove behaviour, not just that text was typed.",
+  "checks": [
+    {
+      "device": "R1",
+      "command": "display ospf peer brief",
+      "expect": ["2.2.2.2", "3.3.3.3", "Full"],
+      "reject": ["Down", "Init"]
+    },
+    {
+      "device": "R2",
+      "command": "display ospf peer brief",
+      "expect": ["2.2.2.2", "Full"],
+      "reject": ["Down"]
+    },
+    {
+      "device": "L2",
+      "command": "display vrrp brief",
+      "expect": ["Master", "192.168.100.254", "192.168.200.254"],
+      "reject": ["Initialize"]
+    },
+    {
+      "device": "L3",
+      "command": "display vrrp brief",
+      "expect": ["Backup", "192.168.100.254", "192.168.200.254"],
+      "reject": ["Initialize"]
+    },
+    {
+      "device": "L2",
+      "command": "display eth-trunk 1",
+      "expect": ["Operate status: up", "STATIC"],
+      "reject": ["down"]
+    },
+    {
+      "device": "L3",
+      "command": "display eth-trunk 1",
+      "expect": ["Operate status: up", "STATIC"],
+      "reject": ["down"]
+    },
+    {
+      "device": "L2",
+      "command": "display stp",
+      "expect": ["Primary root"]
+    },
+    {
+      "device": "L3",
+      "command": "display stp",
+      "expect": ["Secondary root"]
+    },
+    {
+      "device": "R1",
+      "command": "ping -c 2 2.2.2.2",
+      "expect": ["2 packet(s) received"]
+    },
+    {
+      "device": "R1",
+      "command": "ping -c 2 3.3.3.3",
+      "expect": ["2 packet(s) received"]
+    },
+    {
+      "device": "R1",
+      "command": "ping -c 2 4.4.4.4",
+      "expect": ["2 packet(s) received"]
+    },
+    {
+      "device": "R1",
+      "command": "ping -c 2 192.168.100.101",
+      "expect": ["2 packet(s) received"]
+    },
+    {
+      "device": "R1",
+      "command": "ping -c 2 192.168.200.101",
+      "expect": ["2 packet(s) received"]
+    },
+    {
+      "device": "R2",
+      "command": "ping -c 2 192.168.100.101",
+      "expect": ["2 packet(s) received"]
+    },
+    {
+      "device": "R2",
+      "command": "ping -c 2 192.168.200.101",
+      "expect": ["2 packet(s) received"]
+    }
+  ]
+}

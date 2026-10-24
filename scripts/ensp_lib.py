@@ -30,7 +30,10 @@ __all__ = [
 ]
 
 # Models that have no VRP command line, so a console script cannot configure them.
-NON_CLI_MODELS = {"PC", "SimPC", "Laptop", "Cloud", "Hub", "MCS", "STA", "AP", "FRSW"}
+NON_CLI_MODELS = {
+    "PC", "SimPC", "Laptop", "Cloud", "Hub", "MCS", "STA", "AP", "FRSW",
+    "Client", "Server", "Cellphone",
+}
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_FIRST_PORT = 2000
@@ -39,8 +42,9 @@ DEFAULT_LAST_PORT = 2099
 # How much of the tail of the buffer to match prompts against.
 _TAIL = 400
 
-# `<Huawei>` or `[Huawei]` or `[Huawei-GigabitEthernet0/0/1]`
-PROMPT_RE = re.compile(rb"[\r\n]?\s*[<\[][A-Za-z0-9_\-.]{1,64}[>\]]\s*$")
+# `<Huawei>` or `[Huawei]` or `[L1-GigabitEthernet0/0/1]` or `[Huawei-Vlanif100]`.
+# Interface views put `/` in the prompt, so it has to be in the character class.
+PROMPT_RE = re.compile(rb"[\r\n]?\s*[<\[][A-Za-z0-9_\-./:]{1,64}[>\]]\s*$")
 # Interactive confirmation such as `Are you sure to continue?[Y/N]`
 QUESTION_RE = re.compile(rb"\[[Yy]/[Nn]\]\s*$")
 # `save` on some VRP versions asks for a file name; accept the default.
@@ -105,6 +109,21 @@ class Topo:
         for dev in self.devices:
             if dev.name == name:
                 return dev
+        # Canvas labels are often localised ("三层交换机L2") or decorated
+        # ("R1-Core"). Fall back to a suffix/containment match so a check plan
+        # written against short names still resolves.
+        lowered = name.lower()
+        for dev in self.devices:
+            if dev.name.lower().endswith(lowered):
+                return dev
+        matches = [d for d in self.devices if lowered in d.name.lower()]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            listed = ", ".join(d.name for d in matches)
+            raise TopologyError(
+                f"device {name!r} is ambiguous in {self.path}: matches {listed}"
+            )
         raise TopologyError(f"device {name!r} not found in {self.path}")
 
     def names(self) -> list[str]:
@@ -425,16 +444,44 @@ class Console:
         Returns (command, output) pairs so callers can look for errors.
         """
         results: list[tuple[str, str]] = []
+        self.quiet()
         self.run("system-view")
         for cmd in commands:
             cmd = cmd.strip()
             if not cmd:
                 continue
-            results.append((cmd, self.run(cmd)))
+            output = self.run(cmd)
+            # A member port can only join an Eth-Trunk that already exists.
+            # Create it on demand and retry, so snippet order stops mattering.
+            ref = _ETH_TRUNK_REF_RE.match(cmd)
+            if ref and _ETH_TRUNK_MISSING in output.lower():
+                trunk = ref.group(1)
+                self.run(f"interface Eth-Trunk{trunk}")
+                self.run("quit")
+                output = self.run(cmd)
+            results.append((cmd, output))
         self.run("return")
         if save:
             results.append(("<save>", self.save()))
         return results
+
+    def quiet(self) -> None:
+        """Stop asynchronous log messages from interleaving with command output.
+
+        VRP prints event logs (`DATASYNC_CFGCHANGE`, link up/down, ...) straight
+        to the console as they happen. They land in the middle of a command's
+        output and can push the prompt out of the tail window, which looks like
+        a hung device. Turning terminal monitor off makes the session
+        deterministic.
+
+        Not every VRP version has the command, so a rejection is ignored.
+        """
+        if self.prompt.startswith(b"["):
+            self.run("return")
+        try:
+            self.run("undo terminal monitor")
+        except ConsoleError:
+            pass
 
     def save(self) -> str:
         """Persist the running config to flash, answering the Y/N prompt."""
@@ -532,3 +579,11 @@ def load_config_lines(path: str) -> list[str]:
 
 def normalize_config_line(line: str) -> str:
     return re.sub(r"\s+", " ", line.strip())
+
+
+# `eth-trunk 1` on a physical port fails with "The trunk port does not exist"
+# unless `interface Eth-Trunk1` has already been created. Snippets are written
+# in reading order, which often puts the member ports first.
+_ETH_TRUNK_REF_RE = re.compile(r"^eth-trunk\s+(\d+)$", re.IGNORECASE)
+_ETH_TRUNK_MISSING = "trunk port does not exist"
+
