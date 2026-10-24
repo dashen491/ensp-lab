@@ -31,13 +31,34 @@ Python 3.8+ with the standard library is enough. Nothing to install.
 
 ## Workflow
 
-All commands below run from the repository root, with `--topo` pointing at the
-user's topology file. `--topo` is what lets you say `R1` instead of `2000`.
+Every command below uses two paths, and neither may be relative to the user's
+current directory:
+
+- `<skill>` is the directory containing this file (the one with `scripts/`,
+  `examples/` and `references/` in it). Resolve it once at the start.
+- `<topo>` is the user's `.topo` file. `--topo` is what lets you say `R1`
+  instead of `2000`.
+
+Resolve `<skill>` before the first command:
+
+```bash
+# The skill's own directory, not the working directory
+python -c "import os,sys; print(os.path.dirname(os.path.abspath(sys.argv[1])))" <path-to-SKILL.md>
+```
+
+Then always invoke the script by its absolute path, for example:
+
+```bash
+python "C:/Users/me/.claude/skills/ensp-lab/scripts/ensp.py" ports --topo "<topo>"
+```
+
+The user's shell may be bash, PowerShell or cmd. Quote both paths, and prefer
+forward slashes on Windows.
 
 ### 1. Confirm the lab is up
 
-```
-python scripts/ensp.py ports --topo <path/to/lab.topo>
+```bash
+python "<skill>/scripts/ensp.py" ports --topo "<topo>"
 ```
 
 Expect one line per device with status `running`. If everything says
@@ -53,7 +74,7 @@ Read the current state before changing it, so you can tell the user what
 actually changed and can back out:
 
 ```
-python scripts/ensp.py exec R1 "display current-configuration" --topo lab.topo
+python "<skill>/scripts/ensp.py" exec R1 "display current-configuration" --topo "<topo>"
 ```
 
 For a lab device that is still on factory defaults this is short. If it already
@@ -62,7 +83,7 @@ has a real configuration, confirm with the user before overwriting.
 ### 3. Apply configuration
 
 ```
-python scripts/ensp.py config R1 examples/configs/ospf_single_area/R1.cfg --topo lab.topo
+python "<skill>/scripts/ensp.py" config R1 "<skill>/examples/configs/ospf_single_area/R1.cfg" --topo "<topo>"
 ```
 
 The config file is plain VRP, one command per line, `#` and `!` start comments.
@@ -76,7 +97,7 @@ back another.
 ### 4. Verify
 
 ```
-python scripts/ensp.py verify examples/checks/ospf_single_area.json --topo lab.topo
+python "<skill>/scripts/ensp.py" verify "<skill>/examples/checks/ospf_single_area.json" --topo "<topo>"
 ```
 
 A check passes when every `expect` string appears in the output and no `reject`
@@ -96,7 +117,7 @@ guessing produces config that applies cleanly but does not pass traffic.
 If you do not know the wiring, read it from the topology or ask:
 
 ```
-python scripts/ensp.py exec R1 "display interface brief" --topo lab.topo
+python "<skill>/scripts/ensp.py" exec R1 "display interface brief" --topo "<topo>"
 ```
 
 Use the templates in `examples/configs/` as a starting point:
