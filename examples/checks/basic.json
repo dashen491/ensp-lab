@@ -1,0 +1,36 @@
+{
+  "_comment": "Static routing lab checks. Run: python scripts/ensp.py verify examples/checks/basic.json --topo lab.topo",
+  "checks": [
+    {
+      "device": "R1",
+      "name": "interfaces are up",
+      "command": "display ip interface brief",
+      "expect": ["10.0.12.1", "10.0.1.1"]
+    },
+    {
+      "device": "R1",
+      "name": "has a route to R3 loopback",
+      "command": "display ip routing-table",
+      "expect": ["10.0.3.0/24", "Static"],
+      "reject": ["Error"]
+    },
+    {
+      "device": "R2",
+      "name": "has routes to both loopbacks",
+      "command": "display ip routing-table",
+      "expect": ["10.0.1.0/24", "10.0.3.0/24"]
+    },
+    {
+      "device": "R3",
+      "name": "has a route back to R1 loopback",
+      "command": "display ip routing-table",
+      "expect": ["10.0.1.0/24"]
+    },
+    {
+      "device": "R1",
+      "name": "ping R3 loopback",
+      "command": "ping -c 2 10.0.3.3",
+      "expect": ["2 packet(s) received"]
+    }
+  ]
+}

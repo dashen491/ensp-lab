@@ -1,0 +1,41 @@
+{
+  "_comment": "Single area OSPF checks. Neighbours must reach Full before routes appear.",
+  "checks": [
+    {
+      "device": "R1",
+      "name": "OSPF neighbour R2 is Full",
+      "command": "display ospf peer brief",
+      "expect": ["10.0.2.2", "Full"]
+    },
+    {
+      "device": "R2",
+      "name": "OSPF has two neighbours",
+      "command": "display ospf peer brief",
+      "expect": ["10.0.1.1", "10.0.3.3", "Full"]
+    },
+    {
+      "device": "R3",
+      "name": "learned R1 loopback as OSPF",
+      "command": "display ip routing-table",
+      "expect": ["10.0.1.0/24", "OSPF"]
+    },
+    {
+      "device": "R1",
+      "name": "learned R3 loopback as OSPF",
+      "command": "display ip routing-table",
+      "expect": ["10.0.3.0/24", "OSPF"]
+    },
+    {
+      "device": "R1",
+      "name": "ping R3 loopback",
+      "command": "ping -c 2 10.0.3.3",
+      "expect": ["2 packet(s) received"]
+    },
+    {
+      "device": "R1",
+      "name": "LSDB holds router LSAs",
+      "command": "display ospf lsdb",
+      "expect": ["Router"]
+    }
+  ]
+}

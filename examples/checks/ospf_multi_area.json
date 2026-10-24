@@ -1,0 +1,36 @@
+{
+  "_comment": "Multi area OSPF checks. R2 must be an ABR and summarise area 1.",
+  "checks": [
+    {
+      "device": "R2",
+      "name": "is an ABR with neighbours in both areas",
+      "command": "display ospf brief",
+      "expect": ["Area Border Router", "0.0.0.0", "0.0.0.1"]
+    },
+    {
+      "device": "R1",
+      "name": "sees the summary route, not the detail",
+      "command": "display ip routing-table",
+      "expect": ["10.1.0.0/16"],
+      "reject": ["10.1.3.0/24"]
+    },
+    {
+      "device": "R1",
+      "name": "summary route is an inter-area OSPF route",
+      "command": "display ip routing-table 10.1.0.0",
+      "expect": ["OSPF"]
+    },
+    {
+      "device": "R3",
+      "name": "has a default or inter-area route to area 0",
+      "command": "display ip routing-table",
+      "expect": ["10.0.1.0/24", "OSPF"]
+    },
+    {
+      "device": "R1",
+      "name": "ping R3 loopback",
+      "command": "ping -c 2 10.1.3.3",
+      "expect": ["2 packet(s) received"]
+    }
+  ]
+}

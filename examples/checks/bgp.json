@@ -1,0 +1,35 @@
+{
+  "_comment": "eBGP checks. The session must be Established before any prefix appears.",
+  "checks": [
+    {
+      "device": "R1",
+      "name": "eBGP session is Established",
+      "command": "display bgp peer",
+      "expect": ["10.0.12.2", "65002", "Established"]
+    },
+    {
+      "device": "R2",
+      "name": "eBGP session is Established",
+      "command": "display bgp peer",
+      "expect": ["10.0.12.1", "65001", "Established"]
+    },
+    {
+      "device": "R1",
+      "name": "learned R2 loopback from BGP",
+      "command": "display bgp routing-table",
+      "expect": ["10.0.2.0/24", "10.0.12.2"]
+    },
+    {
+      "device": "R1",
+      "name": "route is preferred from BGP",
+      "command": "display ip routing-table 10.0.2.0",
+      "expect": ["BGP"]
+    },
+    {
+      "device": "R1",
+      "name": "ping R2 loopback",
+      "command": "ping -c 2 10.0.2.2",
+      "expect": ["2 packet(s) received"]
+    }
+  ]
+}

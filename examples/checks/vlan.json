@@ -1,0 +1,35 @@
+{
+  "_comment": "VLAN and STP checks for two switches joined by a trunk.",
+  "checks": [
+    {
+      "device": "SW1",
+      "name": "both VLANs exist",
+      "command": "display vlan",
+      "expect": ["10", "20", "Common"]
+    },
+    {
+      "device": "SW1",
+      "name": "uplink is a trunk carrying both VLANs",
+      "command": "display port vlan GigabitEthernet0/0/1",
+      "expect": ["trunk", "10", "20"]
+    },
+    {
+      "device": "SW2",
+      "name": "access port is in VLAN 10",
+      "command": "display port vlan GigabitEthernet0/0/2",
+      "expect": ["10", "access"]
+    },
+    {
+      "device": "SW1",
+      "name": "SW1 is the spanning tree root",
+      "command": "display stp",
+      "expect": ["Root"]
+    },
+    {
+      "device": "SW1",
+      "name": "uplink is forwarding",
+      "command": "display stp interface GigabitEthernet0/0/1",
+      "expect": ["FORWARDING"]
+    }
+  ]
+}
