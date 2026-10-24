@@ -164,6 +164,11 @@ answered.
 Topology parsing reads the `.topo` XML directly to map device names to console
 ports, so you never have to look up which port belongs to which router.
 
+## Tests
+
+The suite runs without eNSP on Linux, macOS and Windows (Python 3.9+), and CI
+runs it on all three.
+
 ## Testing without eNSP
 
 The test suite includes a fake VRP device that speaks the same protocol, which
