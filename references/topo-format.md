@@ -10,7 +10,7 @@ wiring without opening the GUI.
 <?xml version="1.0" encoding="UNICODE" ?>
 <topo>
     <devices>
-        <dev id="135C9ACE-B0CE-4a32-8DF2-2B227EBC16BE"
+        <dev id="00000000-0000-0000-0000-000000000001"
              name="R1" model="AR1220" settings=""
              com_port="2000" bootmode="0"
              cx="341.000000" cy="125.000000"
@@ -22,7 +22,8 @@ wiring without opening the GUI.
         </dev>
     </devices>
     <lines>
-        <line srcDeviceID="135C9ACE-..." destDeviceID="A3B3E3D3-...">
+        <line srcDeviceID="00000000-0000-0000-0000-000000000001"
+              destDeviceID="00000000-0000-0000-0000-000000000002">
             <interfacePair lineName="Copper"
                            srcIndex="0" tarIndex="2"
                            srcBoundRect_X="368.0" srcBoundRect_Y="195.1"
@@ -82,8 +83,9 @@ topo = ensp_lib.parse_topo("lab.topo")
 for device in topo.devices:
     print(device.name, device.model, device.com_port)
 
+by_id = {device.id: device for device in topo.devices}
 for link in topo.links:
-    print(topo.by_name(topo.devices[0].name))  # or resolve via ids
+    print(by_id[link.src_id].name, "->", by_id[link.dst_id].name)
 ```
 
 `parse_topo` tolerates UTF-8, UTF-8 with BOM, UTF-16 and GB18030, because eNSP

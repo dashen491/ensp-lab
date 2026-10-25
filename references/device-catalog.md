@@ -4,9 +4,10 @@ Every model eNSP can place on the canvas, what its console looks like, and how
 its interfaces are named. Read this instead of guessing a model name or an
 interface prefix.
 
-Source: `res/items.xml` in the eNSP install (the GUI's own device palette), plus
-the interface blocks of the 40 `.topo` files shipped in `eNSP/examples/`. The
-catalog is the same across eNSP 1.3.x installs; only the installed plugins vary.
+This is original documentation, written from observing the device palette and
+from the interface blocks that appear in topologies built with eNSP 1.3.x. No
+file shipped inside the eNSP installer is reproduced here. The model set is
+stable across 1.3.x installs; only the installed plugins vary.
 
 ## Routers — category `AR`
 

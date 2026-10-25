@@ -8,3 +8,4 @@ lab.topo
 .idea/
 .vscode/
 *.log
+tools/probe32.c

@@ -1,12 +1,19 @@
 # ensp-lab
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Script Huawei eNSP lab devices from the command line, and as a Claude Code skill.
 
 eNSP opens a TCP console for every started device on `127.0.0.1`, from port
 2000 upward. That socket is the device's real VRP command line, so configuration
 can be pushed and verified by a script instead of typed into the GUI.
 
-No dependencies. Python 3.8+ standard library only.
+No dependencies. Python 3.10+ standard library only.
+
+> **Unofficial.** Not affiliated with, endorsed by, or supported by Huawei. This
+> repository contains no Huawei software, device images, or vendor files, does
+> not circumvent any licensing or activation, and never contacts Huawei servers.
+> You need your own eNSP install. See [NOTICE.md](NOTICE.md).
 
 ## What it does not do
 
@@ -16,7 +23,7 @@ VirtualBox, with no usable API. Build and start the lab in eNSP, then use this.
 ## Install
 
 ```bash
-git clone <this repo> ensp-lab
+git clone https://github.com/<your-account>/ensp-lab.git
 cd ensp-lab
 python -m unittest discover -s tests    # no eNSP needed
 ```
@@ -154,6 +161,8 @@ references/topo-format.md    the .topo XML format
 references/vrp-cookbook.md   short working VRP snippets
 tests/                       unit tests plus a fake VRP device
 tests/fake_device.py         run a fake device on a fixed port for manual testing
+tools/fix_vbox_path.py       repair the eNSP VBox path after install
+NOTICE.md                    copyright, trademark and scope disclaimer
 ```
 
 ## How it works
@@ -170,7 +179,7 @@ ports, so you never have to look up which port belongs to which router.
 
 ## Tests
 
-The suite runs without eNSP on Linux, macOS and Windows (Python 3.9+), and CI
+The suite runs without eNSP on Linux, macOS and Windows (Python 3.10+), and CI
 runs it on all three.
 
 ## Testing without eNSP
@@ -236,6 +245,17 @@ non-elevated process. Nothing errors; clicks simply do nothing. Change the
 - eNSP console ports are assigned in device creation order, so the port is
   stable for a given topology but changes if devices are added or deleted.
 
+## Scope and disclaimer
+
+This tool drives the console ports eNSP already exposes on `127.0.0.1` for
+devices you started yourself. It ships no Huawei software, firmware or device
+images, does not modify or circumvent licensing or activation, and makes no
+network calls to Huawei. Huawei, eNSP and VRP are trademarks of Huawei
+Technologies Co., Ltd.; this project is unofficial and unaffiliated. Use it on
+your own lab only, within the terms of the eNSP licence you installed under.
+
+Full text: [NOTICE.md](NOTICE.md).
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 dashen491.

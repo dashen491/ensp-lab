@@ -44,14 +44,30 @@ _TAIL = 400
 
 # `<Huawei>` or `[Huawei]` or `[L1-GigabitEthernet0/0/1]` or `[Huawei-Vlanif100]`.
 # Interface views put `/` in the prompt, so it has to be in the character class.
+#
+# Only used during the handshake, before the device name is known. Anywhere
+# later a prompt is matched against the learned hostname: a generic pattern
+# also matches output such as `[V200R003C00]`, the version banner that opens
+# `display current-configuration`, and treating that as a prompt truncates
+# every long display command to its first line.
 PROMPT_RE = re.compile(rb"[\r\n]?\s*[<\[][A-Za-z0-9_\-./:]{1,64}[>\]]\s*$")
-# Interactive confirmation such as `Are you sure to continue?[Y/N]`
-QUESTION_RE = re.compile(rb"\[[Yy]/[Nn]\]\s*$")
+# Interactive confirmation: `[Y/N]`, `(y/n)[n]:`, `Are you sure? [Y/N]:`
+QUESTION_RE = re.compile(
+    rb"(?:\[[Yy]/[Nn]\]|\([Yy]/[Nn]\)(?:\s*\[[A-Za-z]?\])?\s*:?)\s*$"
+)
 # `save` on some VRP versions asks for a file name; accept the default.
 FILENAME_RE = re.compile(rb"file name[^:]*:\s*$", re.IGNORECASE)
 MORE_RE = re.compile(rb"-+\s*More\s*-+", re.IGNORECASE)
 USERNAME_RE = re.compile(rb"(?:Username|Login)\s*:\s*$", re.IGNORECASE)
 PASSWORD_RE = re.compile(rb"Password\s*:\s*$", re.IGNORECASE)
+# The console session was dropped back to the login banner.
+RELOGIN_RE = re.compile(rb"Press\s+(?:ENTER|any\s+key)", re.IGNORECASE)
+
+# A real console takes a bare CR. Sending CR LF at an interactive `(y/n)`
+# prompt makes VRP treat the answer as a fresh command and reject it, so
+# answers go out with CR alone.
+CR = b"\r"
+ANSWER_YES = b"y" + CR
 
 IAC, DONT, DO, WONT, WILL, SB, SE = 255, 254, 253, 252, 251, 250, 240
 
@@ -221,6 +237,8 @@ class Console:
         self._buf = b""
         self.prompt = b""
         self.name = f"{host}:{port}"
+        # Built once the hostname is known; see _learn_prompt.
+        self.prompt_re: re.Pattern[bytes] | None = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -243,12 +261,29 @@ class Console:
         self._handshake()
         self.prompt = self._prompt_from_buffer()
         self.name = self._prompt_name()
+        self._learn_prompt()
         # Long output is paginated by default; ask for a continuous stream.
+        # Not every VRP build has it (`AR1220` rejects it), so the reply is
+        # drained and discarded rather than treated as an error.
         try:
             self.run("screen-length 0 temporary", timeout=5)
         except ConsoleError:
             pass
+        # The reply can land after `run` already saw its prompt, leaving text
+        # in the buffer for the next command to read as its own output.
+        self._drain(quiet=0.4, limit=2.0)
         return self
+
+    def _drain(self, quiet: float = 0.4, limit: float = 2.0) -> None:
+        """Read until the line goes quiet, then drop whatever arrived."""
+        deadline = time.time() + limit
+        last = time.time()
+        while time.time() < deadline:
+            if self._recv(timeout=0.1):
+                last = time.time()
+            elif time.time() - last >= quiet:
+                break
+        self._buf = b""
 
     def close(self) -> None:
         if self._sock is not None:
@@ -284,12 +319,12 @@ class Console:
                 self._send_raw(self.password.encode() + b"\r\n")
                 continue
 
-            if b"Press ENTER" in tail or b"Press any key" in tail:
-                self._send_raw(b"\r\n")
+            if RELOGIN_RE.search(tail):
+                self._send_raw(CR)
                 continue
 
             if QUESTION_RE.search(tail):
-                self._send_raw(b"Y\r\n")
+                self._send_raw(ANSWER_YES)
                 continue
 
             if PROMPT_RE.search(tail) and not QUESTION_RE.search(tail):
@@ -306,6 +341,35 @@ class Console:
         if match is None:
             raise ConsoleError(f"{self.name}: handshake ended without a prompt")
         return match.group(0).strip()
+
+    def _learn_prompt(self) -> None:
+        """Build a prompt pattern anchored on this device's own hostname.
+
+        A generic `[something]` pattern is ambiguous: `display
+        current-configuration` starts with `[V200R003C00]`, and the pager
+        marker `---- More ----` contains brackets too. Matching only the
+        hostname we just saw in the prompt removes both false positives.
+        """
+        host = self.name.encode()
+        self.prompt_re = re.compile(
+            rb"[\r\n]?\s*[<\[]"
+            + re.escape(host)
+            # System and interface views append `-view`, `-GigabitEthernet0/0/1`
+            + rb"(?:-[A-Za-z0-9_\-./]+)*"
+            + rb"[>\]]\s*$"
+        )
+
+    def _at_prompt(self, tail: bytes) -> bool:
+        """Whether `tail` ends on the command prompt."""
+        if self.prompt_re is None:
+            return bool(PROMPT_RE.search(tail))
+        return bool(self.prompt_re.search(tail))
+
+    def _adopt_prompt_name(self, name: str) -> None:
+        """Follow a hostname change, so `sysname R1` does not break matching."""
+        if name and name != self.name:
+            self.name = name
+            self._learn_prompt()
 
     # -- raw io ------------------------------------------------------------
 
@@ -375,16 +439,39 @@ class Console:
         command: str,
         timeout: float | None = None,
         confirm: bool = True,
+        accept_names: tuple[str, ...] = (),
     ) -> str:
         """Send one command and return its output with the echo and prompt removed.
 
         With `confirm`, an interactive `[Y/N]` question is answered with Y.
+        `accept_names` lists further hostnames the prompt may show when this
+        command finishes, which is what makes `sysname` work.
         """
         if self._sock is None:
             raise ConsoleError("not connected")
 
-        self._buf = b""
-        self._send_raw(command.encode("utf-8") + b"\r\n")
+        # `sysname` renames the prompt, so accept the name it is about to set
+        # without requiring every caller to pass `accept_names`.
+        if command.lower().startswith("sysname "):
+            accept_names = (*accept_names, command.split(None, 1)[1].strip())
+
+        prompt_re = self.prompt_re
+        if accept_names:
+            names = [self.name, *accept_names]
+            prompt_re = re.compile(
+                rb"[\r\n]?\s*[<\[]"
+                + rb"(?:" + b"|".join(re.escape(n.encode()) for n in names) + rb")"
+                + rb"(?:-[A-Za-z0-9_\-./]+)*"
+                + rb"[>\]]\s*$"
+            )
+
+        # Anything still in flight belongs to the previous command. Reading it
+        # as this command's output is what makes `exec` return the wrong text.
+        if self._buf:
+            self._drain(quiet=0.05, limit=0.3)
+        else:
+            self._buf = b""
+        self._send_raw(command.encode("utf-8") + CR)
         deadline = time.time() + (timeout if timeout is not None else self.timeout)
         match = None
 
@@ -400,22 +487,33 @@ class Console:
                         f"{self.name}: {command!r} is waiting for confirmation "
                         f"({tail.decode('utf-8', 'replace').strip()})"
                     )
-                self._send_raw(b"Y\r\n")
+                # A bare CR: CR LF at this prompt is parsed as a new command.
+                self._send_raw(ANSWER_YES)
                 continue
 
             # A save filename prompt: pressing enter keeps the default.
             if FILENAME_RE.search(tail):
-                self._send_raw(b"\r\n")
+                self._send_raw(CR)
+                continue
+
+            # The console dropped back to the login banner (it does this on
+            # its own after a while, or after `quit`).
+            if RELOGIN_RE.search(tail):
+                self._send_raw(CR)
                 continue
 
             # A returned prompt means the command finished, even if the output
             # happened to contain a `---- More ----` marker earlier.
-            match = PROMPT_RE.search(tail)
+            match = (prompt_re or PROMPT_RE).search(tail)
             if match:
                 break
 
             if MORE_RE.search(tail):
                 self._send_raw(b" ")
+                # Drop the marker once handled. Leaving it in the buffer makes
+                # the next iteration match the same stale marker and send
+                # spaces faster than the device can page.
+                self._buf = MORE_RE.sub(b"", self._buf)
                 time.sleep(0.05)
                 continue
         else:
@@ -425,14 +523,27 @@ class Console:
             )
 
         self.prompt = match.group(0).strip()
+        # Only follow a prompt that actually carries the new name: a bare
+        # `<R1>` match must not rename the session to the hostname itself.
+        if accept_names:
+            shown = self.prompt.decode("utf-8", "replace").strip("<>[] ").split("-", 1)[0]
+            if shown in accept_names:
+                self._adopt_prompt_name(shown)
 
         # The match was found in the tail slice, so translate its offset back
         # into the full buffer before cutting the output.
         offset = len(self._buf) - len(tail)
         text = self._buf[: offset + match.start()].decode("utf-8", "replace")
         text = text.replace("\r\n", "\n").replace("\r", "\n")
-        # Drop pager markers that were echoed back as pages were advanced.
+        # Advance the pager one page per marker, then strip what is left.
         text = re.sub(r"[ \t]*-+\s*More\s*-+[ \t]*", "", text, flags=re.IGNORECASE)
+        # Cursor moves the device emits when it redraws a paged screen, e.g.
+        # `ESC[42D` plus the spaces it overwrote.
+        text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+        # The redraw leaves a run of spaces in place of the moved-over text,
+        # which shows up as a line indented far past the rest of the output.
+        text = re.sub(r"(?m)^[ \t]{20,}", "", text)
+        text = re.sub(r"[ \t]+\n", "\n", text)
         lines = text.split("\n")
         if lines and command.strip() in lines[0]:
             lines = lines[1:]
@@ -450,7 +561,9 @@ class Console:
             cmd = cmd.strip()
             if not cmd:
                 continue
-            output = self.run(cmd)
+            # `sysname` changes the prompt, so accept the new name right away.
+            accept = (cmd.split(None, 1)[1].strip(),) if cmd.lower().startswith("sysname ") else ()
+            output = self.run(cmd, accept_names=accept)
             # A member port can only join an Eth-Trunk that already exists.
             # Create it on demand and retry, so snippet order stops mattering.
             ref = _ETH_TRUNK_REF_RE.match(cmd)
@@ -484,8 +597,56 @@ class Console:
             pass
 
     def save(self) -> str:
-        """Persist the running config to flash, answering the Y/N prompt."""
-        return self.run("save", timeout=90)
+        """Persist the running config to flash, answering the prompts.
+
+        `run` already answers the Y/N question, but two shapes need handling
+        that a plain prompt loop gets wrong:
+
+        * Routers print `(y/n)[n]:` and only accept a bare CR as the answer;
+          sending CR LF makes VRP parse `y` as a new command.
+        * Switches follow the Y/N with `Please input the file name ... :`.
+          Answering that with `y` fails with `Invalid file name`.
+        """
+        if self._sock is None:
+            raise ConsoleError("not connected")
+
+        self._buf = b""
+        self._send_raw(b"save" + CR)
+        deadline = time.time() + 120
+        answered = False
+        named = False
+
+        while time.time() < deadline:
+            self._recv(timeout=0.3)
+            tail = self._buf[-_TAIL:]
+
+            if not answered and QUESTION_RE.search(tail):
+                self._send_raw(ANSWER_YES)
+                answered = True
+                self._buf = b""
+                continue
+
+            if answered and not named and FILENAME_RE.search(tail):
+                self._send_raw(CR)
+                named = True
+                self._buf = b""
+                continue
+
+            if b"saved successfully" in self._buf or b"Save the configuration successfully" in self._buf:
+                time.sleep(0.5)
+                self._recv(timeout=0.3)
+                break
+
+            # Router and switch word the completion line differently; fall
+            # back to the prompt once the answer has been taken.
+            if answered and self._at_prompt(tail):
+                break
+        else:
+            raise ConsoleError(f"{self.name}: save did not finish: {self._tail()!r}")
+
+        out = self._buf.decode("utf-8", "replace").replace("\r", "")
+        self._buf = b""
+        return out.strip()
 
 
 # --------------------------------------------------------------------------

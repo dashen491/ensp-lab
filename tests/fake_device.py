@@ -2,10 +2,10 @@
 
     python tests/fake_device.py 2000 R1
 
-Then, in another shell:
+Then, in another shell, address it by port (no topology file needed):
 
-    python scripts/ensp.py ports --topo tests/fixtures/topo.topo
-    python scripts/ensp.py config R1 examples/configs/ospf_single_area/R1.cfg
+    python scripts/ensp.py exec 2000 "display version"
+    python scripts/ensp.py config 2000 examples/configs/ospf_single_area/R1.cfg
 """
 
 from __future__ import annotations

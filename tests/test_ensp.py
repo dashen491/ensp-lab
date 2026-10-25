@@ -128,9 +128,20 @@ class FakeVRP:
                     if split_at is None:
                         break
                     line, rest = buf[:split_at], buf[split_at + 1 :]
+                    terminated_by_lf = buf[split_at] == 0x0A
                     buf = rest.lstrip(b"\r\n")
                     cmd = line.decode("utf-8", "replace").strip()
                     self.received.append(cmd)
+                    # Real VRP takes a bare CR at a `(y/n)` prompt. A CR LF
+                    # leaves the LF to be parsed as a fresh command, which
+                    # produces this error instead of saving.
+                    if self._pending and terminated_by_lf:
+                        self._pending = False
+                        conn.sendall(
+                            (cmd + "\r\n     ^\r\nError: Unrecognized command found "
+                             "at '^' position.\r\n" + self._prompt(view)).encode()
+                        )
+                        continue
                     view, reply = self._handle(cmd, view)
                     if self._pending or self._more_pending:
                         # Waiting on an answer or a pager key: no prompt yet.
@@ -166,6 +177,16 @@ class FakeVRP:
             return view, self._next_page()
         if cmd == "display version":
             return view, "Huawei Versatile Routing Platform Software\r\nVRP (R) software, Version 5.110"
+        if cmd == "display current-configuration":
+            # The version banner opens with `[V200R003C00]`, which a generic
+            # prompt pattern mistakes for the prompt.
+            return view, (
+                "[V200R003C00]\r\n#\r\n sysname R1\r\n#\r\n"
+                "interface GigabitEthernet0/0/1\r\n ip address 10.0.0.1 255.255.255.0\r\n#\r\nreturn"
+            )
+        if cmd == "sysname R2":
+            self.hostname = "R2"
+            return view, ""
         if cmd == "bad-command":
             return view, "Error: Unrecognized command found at '^' position."
         if cmd == "undo terminal monitor":
@@ -271,6 +292,38 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("line 199", out)
         self.assertNotIn("More", out)
 
+    def test_version_banner_is_not_a_prompt(self):
+        """`[V200R003C00]` opens every `display current-configuration`.
+
+        Treating it as the prompt truncates the output to nothing, which is
+        what made every config dump look like an empty device.
+        """
+        with FakeVRP("R1") as fake:
+            with el.Console(fake.port, timeout=5) as con:
+                out = con.run("display current-configuration")
+        self.assertIn("V200R003C00", out)
+        self.assertIn("ip address 10.0.0.1", out)
+        self.assertIn("return", out)
+
+    def test_sysname_change_is_followed(self):
+        """After `sysname R2` the prompt is `<R2>`; matching must follow it."""
+        with FakeVRP("R1") as fake:
+            with el.Console(fake.port, timeout=5) as con:
+                con.run("system-view")
+                con.run("sysname R2")
+                self.assertEqual(con.name, "R2")
+                con.run("return")
+                out = con.run("display version")
+        self.assertIn("Versatile Routing Platform", out)
+
+    def test_save_answer_uses_bare_cr(self):
+        """A CR LF at the `(y/n)` prompt is rejected by real VRP."""
+        with FakeVRP("R1") as fake:
+            with el.Console(fake.port, timeout=5) as con:
+                out = con.save()
+        self.assertTrue(fake.saved)
+        self.assertNotIn("Unrecognized command", out)
+
     def test_config_enters_system_view_and_saves(self):
         with FakeVRP("R1") as fake:
             with el.Console(fake.port, timeout=5) as con:
@@ -296,7 +349,8 @@ class ConsoleTests(unittest.TestCase):
         with FakeVRP("R1") as fake:
             with el.Console(fake.port, timeout=5) as con:
                 con.run("confirm-me")
-        self.assertIn("Y", fake.received)
+        # Lower case: real VRP takes `y` at a `(y/n)` prompt and rejects `Y`.
+        self.assertIn("y", fake.received)
 
     def test_config_quietens_terminal_monitor(self):
         """Event logs interleaved with output look like a hung device."""

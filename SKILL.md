@@ -27,7 +27,7 @@ Check these before doing anything else:
 3. Devices finished booting. A device that is still booting accepts the TCP
    connection but never prints a prompt.
 
-Python 3.8+ with the standard library is enough. Nothing to install.
+Python 3.10+ with the standard library is enough. Nothing to install.
 
 ## Workflow
 
@@ -143,6 +143,8 @@ with loopbacks `10.0.1.1`, `10.0.2.2`, `10.0.3.3`.
 | `no prompt after ...` while output shows `DATASYNC_CFGCHANGE` or other `Oct 25 ... DS/4/...` lines | Event logs interleaved with the command output. `config` now sends `undo terminal monitor` first; for `exec`, do it once per session |
 | `eth-trunk N` → `Error: The trunk port does not exist.` | The member port joined before `interface Eth-TrunkN` existed. `config` creates it on demand now; in hand-written configs, put the `interface Eth-TrunkN` block first |
 | Config looks right, works now, gone after reopening the topology | `save` only reaches the runtime flash. The user must also pick *File → Save Topology*. See below |
+| `exec` prints the *previous* command's output, or nothing at all | Stale bytes still in the socket from the last command. The client now drains before each send; if you see it again, the device is answering slower than the drain window |
+| A `display` command returns only its first line | The prompt was matched against output rather than the prompt line. `display current-configuration` opens with `[V200R003C00]`, which a generic `[xxx]` pattern matches. Prompts are matched against the learned hostname for exactly this reason |
 
 When a command fails, read the actual VRP output back to the user rather than
 paraphrasing it. VRP error text names the exact position of the bad token.
@@ -167,6 +169,33 @@ So after configuring:
 
 PC settings are the exception — they live in the `.topo` file, so they follow
 the topology, not the device flash.
+
+## Console quirks that look like bugs in this tool
+
+These are real device behaviours. Each one used to look like a hung or empty
+device, so they are worth knowing before debugging anything else.
+
+- **A bare CR, not CR LF.** At an interactive `(y/n)` prompt VRP takes the
+  answer only when the line ends in a bare `\r`. With `\r\n` the leftover LF
+  is parsed as a new command and the device replies `Error: Unrecognized
+  command found at '^' position.` — the save silently does not happen. The
+  client sends `y\r` and nothing else.
+- **The prompt is the hostname, not any bracket.** Match `<name>` / `[name]`
+  against the name learned at connect time. Matching a generic `[xxx]` also
+  matches `[V200R003C00]` (the config banner) and the pager's `---- More ----`.
+- **`screen-length 0 temporary` does not exist on every build.** `AR1220`
+  rejects it with `The type of the included user interface must be VTY.` That
+  rejection is harmless and is swallowed.
+- **Switches ask a second question on `save`.** After the Y/N the S-series
+  prints `Please input the file name (*.cfg, *.zip) [vrpcfg.zip]:`. Answering
+  that with `y` fails with `Invalid file name`. Send a bare CR to take the
+  default.
+- **The console logs itself out.** After a few idle minutes the session drops
+  to `Configuration console exit, please press any key to log on`. Send a CR
+  and carry on; it is not a broken connection.
+- **A paged reply redraws the screen.** The output carries `ESC[<n>D` cursor
+  moves and runs of padding spaces. Both are stripped from what `exec`
+  returns.
 
 ## Safety
 
